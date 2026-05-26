@@ -5,9 +5,15 @@ import time
 
 # ============================================================
 # GateMate - Active Multi-Flight Tracker
-# Includes sign-in, hard-coded API key, flight date selection,
-# exact flight choice, popup alerts, packing list, reminders,
-# weather helper, and settings
+# No sign-in
+# Hard-coded API key
+# Flight date selection
+# Exact flight choice
+# Popup alerts
+# Packing list
+# Travel reminders
+# Weather helper
+# Settings
 # ============================================================
 
 st.set_page_config(
@@ -21,8 +27,6 @@ st.set_page_config(
 # ============================================================
 
 AVIATIONSTACK_API_KEY = "1511655c5ec758e858d014fa114512cc"
-
-
 
 
 # ============================================================
@@ -95,22 +99,21 @@ st.sidebar.subheader("📡 Tracking Status")
 
 if st.session_state.tracked_flights:
     st.sidebar.success(f"Tracking {len(st.session_state.tracked_flights)} flight(s)")
+
     for key in st.session_state.tracked_flights:
         snapshot = st.session_state.flight_snapshots.get(key, {})
         flight_name = snapshot.get("flight") or key
         from_iata = snapshot.get("from_iata") or "?"
         to_iata = snapshot.get("to_iata") or "?"
         flight_date_label = snapshot.get("selected_flight_date") or "date unknown"
-        st.sidebar.write(f"• {flight_name}: {from_iata} → {to_iata} | {flight_date_label}")
+
+        st.sidebar.write(
+            f"• {flight_name}: {from_iata} → {to_iata} | {flight_date_label}"
+        )
 else:
     st.sidebar.info("No flights tracked yet.")
 
 st.sidebar.divider()
-
-if st.sidebar.button("Sign Out"):
-    st.session_state.logged_in = False
-    st.rerun()
-
 st.sidebar.caption("iPhone: open in Safari → Share → Add to Home Screen")
 
 
@@ -143,6 +146,7 @@ def safe_get(dictionary, *keys):
     for key in keys:
         if not isinstance(value, dict):
             return None
+
         value = value.get(key)
 
     return value
@@ -212,17 +216,33 @@ def fetch_flight_options(flight_number, selected_date_str, api_key):
 
     url = "http://api.aviationstack.com/v1/flights"
 
+    # IMPORTANT:
+    # We are NOT sending flight_date to Aviationstack.
+    # Some plans return 403 Forbidden when flight_date is used.
+    # We fetch by airline + flight number, then filter by date locally.
     params = {
         "access_key": api_key,
         "airline_iata": airline_code,
         "flight_number": number,
     }
 
-    if selected_date_str:
-        params["flight_date"] = selected_date_str
-
     try:
         response = requests.get(url, params=params, timeout=15)
+
+        if response.status_code == 403:
+            try:
+                error_json = response.json()
+                error_obj = error_json.get("error", {})
+                code = error_obj.get("code", "403")
+                message = error_obj.get("message", "Forbidden")
+
+                return None, (
+                    f"403 Forbidden: {code} - {message}. "
+                    "Your Aviationstack plan may not allow this request."
+                )
+            except Exception:
+                return None, "403 Forbidden: Your Aviationstack plan does not allow this request."
+
         response.raise_for_status()
 
         data = response.json()
@@ -233,7 +253,7 @@ def fetch_flight_options(flight_number, selected_date_str, api_key):
         flights = data.get("data", [])
 
         if not flights:
-            return None, "No flights found. Check the flight number, date, or try closer to departure."
+            return None, "No flights found. Check the flight number or try closer to departure."
 
         selected_date = datetime.strptime(selected_date_str, "%Y-%m-%d").date()
 
@@ -242,8 +262,13 @@ def fetch_flight_options(flight_number, selected_date_str, api_key):
             if flight_matches_selected_date(flight, selected_date)
         ]
 
+        # If the selected date is not returned by the real-time API,
+        # show whatever the API returned instead of crashing.
         if not filtered_flights:
-            return None, f"No flights found for {flight_number} on {selected_date_str}."
+            return flights, (
+                f"No exact match found for {flight_number} on {selected_date_str}. "
+                "Showing available live/recent matches from the API instead."
+            )
 
         return filtered_flights, None
 
@@ -344,6 +369,7 @@ def add_alerts_for_flight(tracking_key, alerts):
     for alert in alerts:
         if "No changes" in alert:
             existing_alerts = st.session_state.flight_alerts.get(tracking_key, [])
+
             if existing_alerts and "No changes" in existing_alerts[0]:
                 continue
 
@@ -358,7 +384,9 @@ def add_alerts_for_flight(tracking_key, alerts):
                 st.toast(alert, icon="🔔")
                 st.session_state.shown_popup_alerts.add(popup_id)
 
-    st.session_state.flight_alerts[tracking_key] = st.session_state.flight_alerts[tracking_key][:20]
+    st.session_state.flight_alerts[tracking_key] = (
+        st.session_state.flight_alerts[tracking_key][:20]
+    )
 
 
 def show_countdown(snapshot):
@@ -384,6 +412,7 @@ def show_countdown(snapshot):
     seconds = total_seconds % 60
 
     c1, c2, c3, c4 = st.columns(4)
+
     c1.metric("Days", days)
     c2.metric("Hours", hours)
     c3.metric("Minutes", minutes)
@@ -431,16 +460,21 @@ def find_matching_selected_flight(flight_number, selected_snapshot, api_key):
 
     flights, error = fetch_flight_options(flight_number, selected_date_str, api_key)
 
-    if error:
+    if not flights and error:
         return None, error
+
+    if error:
+        st.warning(error)
 
     selected_scheduled = (
         selected_snapshot.get("selected_departure_scheduled")
         or selected_snapshot.get("departure_scheduled")
     )
+
     selected_from = selected_snapshot.get("from_iata")
     selected_to = selected_snapshot.get("to_iata")
 
+    # Best match: same scheduled departure + same route
     for flight in flights:
         flight_scheduled = safe_get(flight, "departure", "scheduled")
         flight_from = safe_get(flight, "departure", "iata")
@@ -453,6 +487,7 @@ def find_matching_selected_flight(flight_number, selected_snapshot, api_key):
         ):
             return flight, None
 
+    # Second match: same route + same displayed time
     for flight in flights:
         flight_from = safe_get(flight, "departure", "iata")
         flight_to = safe_get(flight, "arrival", "iata")
@@ -462,6 +497,7 @@ def find_matching_selected_flight(flight_number, selected_snapshot, api_key):
             if simple_time_label(flight_scheduled) == simple_time_label(selected_scheduled):
                 return flight, None
 
+    # Third match: same route
     for flight in flights:
         flight_from = safe_get(flight, "departure", "iata")
         flight_to = safe_get(flight, "arrival", "iata")
@@ -517,6 +553,7 @@ def track_one_flight(tracking_key):
     status_badge(snapshot.get("status"))
 
     top1, top2, top3, top4 = st.columns(4)
+
     top1.metric("Airline", snapshot.get("airline") or "N/A")
     top2.metric("From", snapshot.get("from_iata") or "N/A")
     top3.metric("To", snapshot.get("to_iata") or "N/A")
@@ -590,6 +627,7 @@ def remove_flight(tracking_key):
 
 if page == "Flight Dashboard":
     st.title("✈️ GateMate Active Flight Dashboard")
+
     st.write(
         "Search a flight number, choose the flight date, select the exact departure time, "
         "then actively track route, terminal, gate, delay, status, and countdown."
@@ -617,15 +655,19 @@ if page == "Flight Dashboard":
         if st.button("Search Flight Options"):
             if flight_search.strip():
                 cleaned = clean_flight_number(flight_search)
+
                 flights, error = fetch_flight_options(
                     cleaned,
                     selected_flight_date_str,
                     AVIATIONSTACK_API_KEY
                 )
 
-                if error:
+                if not flights and error:
                     st.error(error)
                 else:
+                    if error:
+                        st.warning(error)
+
                     choice_key = f"{cleaned}_{selected_flight_date_str}"
 
                     st.session_state.flight_choices[choice_key] = flights
@@ -633,9 +675,10 @@ if page == "Flight Dashboard":
                     st.session_state.pending_flight_date = selected_flight_date_str
 
                     st.success(
-                        f"Found {len(flights)} option(s) for {cleaned} on {selected_flight_date_str}. "
+                        f"Found {len(flights)} option(s) for {cleaned}. "
                         "Choose the correct time below."
                     )
+
                     st.rerun()
             else:
                 st.warning("Enter a flight number first.")
@@ -691,19 +734,32 @@ if page == "Flight Dashboard":
         preview4.metric("Status", selected_snapshot.get("status") or "N/A")
 
         st.write(f"**Selected Date:** {pending_date}")
+
         st.write(
             f"**Departure:** "
             f"{format_time(selected_snapshot.get('departure_estimated') or selected_snapshot.get('departure_scheduled'))}"
         )
+
         st.write(
             f"**Arrival:** "
             f"{format_time(selected_snapshot.get('arrival_estimated') or selected_snapshot.get('arrival_scheduled'))}"
         )
-        st.write(f"**Departure Terminal:** {selected_snapshot.get('departure_terminal') or 'Not available'}")
-        st.write(f"**Departure Gate:** {selected_snapshot.get('departure_gate') or 'Not available'}")
+
+        st.write(
+            f"**Departure Terminal:** "
+            f"{selected_snapshot.get('departure_terminal') or 'Not available'}"
+        )
+
+        st.write(
+            f"**Departure Gate:** "
+            f"{selected_snapshot.get('departure_gate') or 'Not available'}"
+        )
 
         if st.button("Track This Exact Flight"):
-            selected_scheduled = selected_snapshot.get("departure_scheduled") or str(selected_index)
+            selected_scheduled = (
+                selected_snapshot.get("departure_scheduled")
+                or str(selected_index)
+            )
 
             tracking_key = (
                 f"{pending}_"
@@ -715,7 +771,9 @@ if page == "Flight Dashboard":
 
             if tracking_key not in st.session_state.tracked_flights:
                 selected_snapshot["search_flight_number"] = pending
-                selected_snapshot["selected_departure_scheduled"] = selected_snapshot.get("departure_scheduled")
+                selected_snapshot["selected_departure_scheduled"] = (
+                    selected_snapshot.get("departure_scheduled")
+                )
                 selected_snapshot["selected_flight_date"] = pending_date
 
                 st.session_state.tracked_flights.append(tracking_key)
@@ -726,6 +784,7 @@ if page == "Flight Dashboard":
 
                 st.toast("✅ Exact flight selected and tracking started.", icon="✈️")
                 st.success(f"Now tracking exact flight: {selected_label}")
+
                 st.rerun()
             else:
                 st.info("This exact flight is already being tracked.")
@@ -749,7 +808,10 @@ if page == "Flight Dashboard":
             with st.container(border=True):
                 track_one_flight(tracking_key)
 
-                if st.button(f"Stop Tracking {flight_title}", key=f"stop_{tracking_key}"):
+                if st.button(
+                    f"Stop Tracking {flight_title}",
+                    key=f"stop_{tracking_key}"
+                ):
                     remove_flight(tracking_key)
                     st.toast(f"Stopped tracking {flight_title}", icon="🛑")
                     st.rerun()
@@ -777,13 +839,17 @@ elif page == "Packing List":
     st.progress(packed / total if total else 0)
     st.write(f"Packed: **{packed}/{total}**")
 
-    new_item = st.text_input("Add item", placeholder="Example: Sunglasses, book, tennis racket")
+    new_item = st.text_input(
+        "Add item",
+        placeholder="Example: Sunglasses, book, tennis racket"
+    )
 
     if st.button("Add Item"):
         if new_item:
             st.session_state.packing_items.append(
                 {"name": new_item, "packed": False}
             )
+
             st.toast(f"Added packing item: {new_item}", icon="🎒")
             st.rerun()
 
@@ -801,6 +867,7 @@ elif page == "Packing List":
     if st.button("Reset List"):
         for item in st.session_state.packing_items:
             item["packed"] = False
+
         st.toast("Packing list reset.", icon="🔄")
         st.rerun()
 
@@ -820,12 +887,14 @@ elif page == "Travel Reminders":
 
         for key in st.session_state.tracked_flights:
             snapshot = st.session_state.flight_snapshots.get(key, {})
+
             label = (
                 f"{snapshot.get('flight') or key} | "
                 f"{snapshot.get('from_iata') or '?'} → {snapshot.get('to_iata') or '?'} | "
                 f"{snapshot.get('selected_flight_date') or 'date unknown'} | "
                 f"{simple_time_label(snapshot.get('departure_scheduled'))}"
             )
+
             flight_options.append((label, key))
 
         labels = [item[0] for item in flight_options]
@@ -838,7 +907,11 @@ elif page == "Travel Reminders":
         if not snapshot:
             st.info("Open Flight Dashboard first so the app can fetch flight data.")
         else:
-            departure_time = snapshot.get("departure_estimated") or snapshot.get("departure_scheduled")
+            departure_time = (
+                snapshot.get("departure_estimated")
+                or snapshot.get("departure_scheduled")
+            )
+
             departure_dt = parse_time(departure_time)
 
             if not departure_dt:
@@ -912,7 +985,10 @@ elif page == "Weather":
         st.info("Enter weather once you know it.")
 
     if st.button("Show Weather Popup Test"):
-        st.toast(f"Weather reminder for {destination or 'destination'}: {weather}", icon="🌦️")
+        st.toast(
+            f"Weather reminder for {destination or 'destination'}: {weather}",
+            icon="🌦️"
+        )
 
 
 # ============================================================
