@@ -22,37 +22,7 @@ st.set_page_config(
 
 AVIATIONSTACK_API_KEY = "1511655c5ec758e858d014fa114512cc"
 
-# ============================================================
-# Simple Sign-In
-# ============================================================
 
-APP_USERNAME = "admin"
-APP_PASSWORD = "1234"  # Change this password if you want
-
-
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-
-
-def login_screen():
-    st.title("✈️ GateMate Sign In")
-    st.write("Please sign in to access your flight tracker.")
-
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-
-    if st.button("Sign In"):
-        if username == APP_USERNAME and password == APP_PASSWORD:
-            st.session_state.logged_in = True
-            st.success("Signed in successfully!")
-            st.rerun()
-        else:
-            st.error("Invalid username or password.")
-
-
-if not st.session_state.logged_in:
-    login_screen()
-    st.stop()
 
 
 # ============================================================
