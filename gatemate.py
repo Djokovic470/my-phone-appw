@@ -4,8 +4,10 @@ from datetime import datetime, timedelta, date
 import time
 
 # ============================================================
-# GateMate - 1 File Active Multi-Flight Tracker
-# User chooses flight date + exact flight time + popup alerts
+# GateMate - Active Multi-Flight Tracker
+# Includes sign-in, hard-coded API key, flight date selection,
+# exact flight choice, popup alerts, packing list, reminders,
+# weather helper, and settings
 # ============================================================
 
 st.set_page_config(
@@ -13,6 +15,45 @@ st.set_page_config(
     page_icon="✈️",
     layout="wide"
 )
+
+# ============================================================
+# Hard-Coded Aviationstack API Key
+# ============================================================
+
+AVIATIONSTACK_API_KEY = "1511655c5ec758e858d014fa114512cc"
+
+# ============================================================
+# Simple Sign-In
+# ============================================================
+
+APP_USERNAME = "admin"
+APP_PASSWORD = "1234"  # Change this password if you want
+
+
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+
+def login_screen():
+    st.title("✈️ GateMate Sign In")
+    st.write("Please sign in to access your flight tracker.")
+
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Sign In"):
+        if username == APP_USERNAME and password == APP_PASSWORD:
+            st.session_state.logged_in = True
+            st.success("Signed in successfully!")
+            st.rerun()
+        else:
+            st.error("Invalid username or password.")
+
+
+if not st.session_state.logged_in:
+    login_screen()
+    st.stop()
+
 
 # ============================================================
 # Session State
@@ -54,11 +95,11 @@ if "packing_items" not in st.session_state:
 
 if "settings" not in st.session_state:
     st.session_state.settings = {
-        "api_key": "",
         "refresh_seconds": 60,
         "arrival_hours_before": 2,
         "drive_minutes": 35,
     }
+
 
 # ============================================================
 # Sidebar
@@ -80,16 +121,6 @@ page = st.sidebar.radio(
 
 st.sidebar.divider()
 
-st.sidebar.subheader("🔑 API Key")
-
-st.session_state.settings["api_key"] = st.sidebar.text_input(
-    "Aviationstack API Key",
-    value=st.session_state.settings["api_key"],
-    type="password"
-)
-
-st.sidebar.divider()
-
 st.sidebar.subheader("📡 Tracking Status")
 
 if st.session_state.tracked_flights:
@@ -105,7 +136,13 @@ else:
     st.sidebar.info("No flights tracked yet.")
 
 st.sidebar.divider()
+
+if st.sidebar.button("Sign Out"):
+    st.session_state.logged_in = False
+    st.rerun()
+
 st.sidebar.caption("iPhone: open in Safari → Share → Add to Home Screen")
+
 
 # ============================================================
 # Helper Functions
@@ -179,10 +216,6 @@ def simple_time_label(time_text):
 
 
 def flight_matches_selected_date(flight_data, selected_date):
-    """
-    Filters API results to the date chosen by the user.
-    Uses departure estimated first, then departure scheduled.
-    """
     if not selected_date:
         return True
 
@@ -200,7 +233,7 @@ def flight_matches_selected_date(flight_data, selected_date):
 @st.cache_data(ttl=60)
 def fetch_flight_options(flight_number, selected_date_str, api_key):
     if not api_key:
-        return None, "Please enter your Aviationstack API key in the sidebar."
+        return None, "Missing Aviationstack API key."
 
     airline_code, number = split_flight_number(flight_number)
 
@@ -215,7 +248,6 @@ def fetch_flight_options(flight_number, selected_date_str, api_key):
         "flight_number": number,
     }
 
-    # Some plans/providers support this; if ignored, we still filter locally below.
     if selected_date_str:
         params["flight_date"] = selected_date_str
 
@@ -471,7 +503,7 @@ def find_matching_selected_flight(flight_number, selected_snapshot, api_key):
 
 
 def track_one_flight(tracking_key):
-    api_key = st.session_state.settings["api_key"]
+    api_key = AVIATIONSTACK_API_KEY
 
     old_snapshot = st.session_state.flight_snapshots.get(tracking_key)
 
@@ -593,9 +625,6 @@ if page == "Flight Dashboard":
         "then actively track route, terminal, gate, delay, status, and countdown."
     )
 
-    if not st.session_state.settings["api_key"]:
-        st.warning("Enter your Aviationstack API key in the sidebar first.")
-
     st.divider()
 
     st.header("➕ Find and Choose Your Flight")
@@ -621,7 +650,7 @@ if page == "Flight Dashboard":
                 flights, error = fetch_flight_options(
                     cleaned,
                     selected_flight_date_str,
-                    st.session_state.settings["api_key"]
+                    AVIATIONSTACK_API_KEY
                 )
 
                 if error:
@@ -726,7 +755,6 @@ if page == "Flight Dashboard":
                 ]
 
                 st.toast("✅ Exact flight selected and tracking started.", icon="✈️")
-
                 st.success(f"Now tracking exact flight: {selected_label}")
                 st.rerun()
             else:
